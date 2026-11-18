@@ -1,4 +1,26 @@
+## Build outputs
+bin/
+obj/
 Test-Taste-Console-Application/bin/
 Test-Taste-Console-Application/obj/
-.DS_Store
+Test-Taste-Console-Application.Tests/bin/
+Test-Taste-Console-Application.Tests/obj/
+TestResults/
+
+## Visual Studio & IDEs
 .vs/
+.idea/
+*.user
+*.suo
+.DS_Store
+
+## Configuration & Secrets (Never commit secrets!)
+appsettings.json
+appsettings.*.json
+!appsettings.example.json
+*.local.json
+.env
+
+## Output directories
+FileOutput/
+Test-Taste-Console-Application/FileOutput/

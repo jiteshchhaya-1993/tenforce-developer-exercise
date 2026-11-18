@@ -1,5 +1,7 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Linq;
 using Newtonsoft.Json;
 using Test_Taste_Console_Application.Constants;
 using Test_Taste_Console_Application.Domain.DataTransferObjects;
@@ -14,7 +16,7 @@ namespace Test_Taste_Console_Application.Domain.Services
     public class MoonService : IMoonService
     {
         private readonly HttpClientService _httpClientService;
-
+        private IEnumerable<Moon> _cachedMoons;
 
         public MoonService(HttpClientService httpClientService)
         {
@@ -23,29 +25,48 @@ namespace Test_Taste_Console_Application.Domain.Services
 
         public IEnumerable<Moon> GetAllMoons()
         {
-            var response = _httpClientService.Client
-                .GetAsync(UriPath.GetAllMoonsWithMassQueryParameters)
-                .Result;
-
-            //If the status code isn't 200-299, then the function returns an empty collection.
-            if (!response.IsSuccessStatusCode)
+            if (_cachedMoons != null)
             {
-                Logger.Instance.Warn($"{LoggerMessage.GetRequestFailed}{response.StatusCode}");
-                return new Collection<Moon>();
+                return _cachedMoons;
             }
 
-            var content = response.Content.ReadAsStringAsync().Result;
-
-            //The JSON converter uses DTO's, that can be found in the DataTransferObjects folder, to deserialize the response content.
             var allMoons = new Collection<Moon>();
-            var results = JsonConvert.DeserializeObject<JsonResult<MoonDto>>(content);
 
-            //The JSON converter can return a null object. 
-            if (results == null) return new Collection<Moon>();
-
-            foreach(MoonDto moonDto in results.Bodies)
+            try
             {
-                allMoons.Add(new Moon(moonDto));
+                Console.WriteLine(OutputString.LoadingMoons);
+
+                var response = _httpClientService.Client
+                    .GetAsync(UriPath.GetAllMoonsWithMassQueryParameters)
+                    .Result;
+
+                // If the status code isn't 200-299, return an empty collection
+                if (!response.IsSuccessStatusCode)
+                {
+                    Logger.Instance.Warn($"{LoggerMessage.GetRequestFailed}{response.StatusCode}");
+                    Console.WriteLine($"{LoggerMessage.GetRequestFailed}{response.StatusCode}");
+                    return allMoons;
+                }
+
+                var content = response.Content.ReadAsStringAsync().Result;
+                var results = JsonConvert.DeserializeObject<JsonResult<MoonDto>>(content);
+
+                if (results?.Bodies == null) return allMoons;
+
+                foreach (var moonDto in results.Bodies)
+                {
+                    allMoons.Add(new Moon(moonDto));
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Instance.Error($"Error occurred while fetching moons: {ex.Message}");
+                Console.WriteLine($"Error occurred while fetching moons: {ex.Message}");
+            }
+
+            if (allMoons.Any())
+            {
+                _cachedMoons = allMoons;
             }
 
             return allMoons;

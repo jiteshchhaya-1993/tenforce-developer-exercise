@@ -1,7 +1,7 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.Globalization;
-using System.Text;
+using System.Linq;
 using Newtonsoft.Json;
 using Test_Taste_Console_Application.Constants;
 using Test_Taste_Console_Application.Domain.DataTransferObjects;
@@ -16,6 +16,7 @@ namespace Test_Taste_Console_Application.Domain.Services
     public class PlanetService : IPlanetService
     {
         private readonly HttpClientService _httpClientService;
+        private IEnumerable<Planet> _cachedPlanets;
 
         public PlanetService(HttpClientService httpClientService)
         {
@@ -24,68 +25,123 @@ namespace Test_Taste_Console_Application.Domain.Services
 
         public IEnumerable<Planet> GetAllPlanets()
         {
-            var allPlanetsWithTheirMoons = new Collection<Planet>();
-
-            var response = _httpClientService.Client
-                .GetAsync(UriPath.GetAllPlanetsWithMoonsQueryParameters)
-                .Result;
-
-            //If the status code isn't 200-299, then the function returns an empty collection.
-            if (!response.IsSuccessStatusCode)
+            if (_cachedPlanets != null)
             {
-                Logger.Instance.Warn($"{LoggerMessage.GetRequestFailed}{response.StatusCode}");
-                return allPlanetsWithTheirMoons;
+                return _cachedPlanets;
             }
 
-            var content = response.Content.ReadAsStringAsync().Result;
+            var allPlanetsWithTheirMoons = new Collection<Planet>();
 
-            //The JSON converter uses DTO's, that can be found in the DataTransferObjects folder, to deserialize the response content.
-            var results = JsonConvert.DeserializeObject<JsonResult<PlanetDto>>(content);
-
-            //The JSON converter can return a null object. 
-            if (results == null) return allPlanetsWithTheirMoons;
-
-            //If the planet doesn't have any moons, then it isn't added to the collection.
-            foreach (var planet in results.Bodies)
+            try
             {
-                if(planet.Moons != null)
-                {
-                    var newMoonsCollection = new Collection<MoonDto>();
-                    foreach (var moon in planet.Moons)
-                    {
-                        var moonResponse = _httpClientService.Client
-                            .GetAsync(UriPath.GetMoonByIdQueryParameters + moon.URLId)
-                            .Result;
-                        var moonContent = moonResponse.Content.ReadAsStringAsync().Result;
-                        newMoonsCollection.Add(JsonConvert.DeserializeObject<MoonDto>(moonContent));
-                    }
-                    planet.Moons = newMoonsCollection;
+                Console.WriteLine(OutputString.LoadingPlanets);
 
+                var response = _httpClientService.Client
+                    .GetAsync(UriPath.GetAllPlanetsWithMoonsQueryParameters)
+                    .Result;
+
+                // If the status code isn't 200-299, log warning and return empty collection
+                if (!response.IsSuccessStatusCode)
+                {
+                    Logger.Instance.Warn($"{LoggerMessage.GetRequestFailed}{response.StatusCode}");
+                    Console.WriteLine($"{LoggerMessage.GetRequestFailed}{response.StatusCode}");
+                    return allPlanetsWithTheirMoons;
                 }
-                allPlanetsWithTheirMoons.Add(new Planet(planet));
+
+                var content = response.Content.ReadAsStringAsync().Result;
+                var results = JsonConvert.DeserializeObject<JsonResult<PlanetDto>>(content);
+
+                if (results?.Bodies == null) return allPlanetsWithTheirMoons;
+
+                // Performance Optimization:
+                // Pre-fetch all moons in a single query to eliminate the N+1 query problem
+                // (reducing ~280 sequential HTTP calls down to a single request).
+                var moonsDictionary = FetchMoonsDictionary();
+
+                foreach (var planet in results.Bodies)
+                {
+                    if (planet.Moons != null && planet.Moons.Any())
+                    {
+                        var newMoonsCollection = new Collection<MoonDto>();
+                        foreach (var moonRef in planet.Moons)
+                        {
+                            var moonId = moonRef.URLId;
+                            if (moonsDictionary != null && moonsDictionary.TryGetValue(moonId, out var cachedMoon))
+                            {
+                                newMoonsCollection.Add(cachedMoon);
+                            }
+                            else
+                            {
+                                // Resilient Fallback: Fetch individual moon by ID if not found in bulk response
+                                var individualMoon = FetchIndividualMoon(moonId);
+                                if (individualMoon != null)
+                                {
+                                    newMoonsCollection.Add(individualMoon);
+                                }
+                            }
+                        }
+                        planet.Moons = newMoonsCollection;
+                    }
+
+                    allPlanetsWithTheirMoons.Add(new Planet(planet));
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Instance.Error($"Error occurred while fetching planets: {ex.Message}");
+                Console.WriteLine($"Error occurred while fetching planets: {ex.Message}");
+            }
+
+            if (allPlanetsWithTheirMoons.Any())
+            {
+                _cachedPlanets = allPlanetsWithTheirMoons;
             }
 
             return allPlanetsWithTheirMoons;
         }
 
-        private static string RemoveDiacritics(string text)
+        private IDictionary<string, MoonDto> FetchMoonsDictionary()
         {
-            var normalizedString = text.Normalize(NormalizationForm.FormD);
-            var stringBuilder = new StringBuilder(capacity: normalizedString.Length);
-
-            for (int i = 0; i < normalizedString.Length; i++)
+            try
             {
-                char c = normalizedString[i];
-                var unicodeCategory = CharUnicodeInfo.GetUnicodeCategory(c);
-                if (unicodeCategory != UnicodeCategory.NonSpacingMark)
-                {
-                    stringBuilder.Append(c);
-                }
-            }
+                var response = _httpClientService.Client
+                    .GetAsync(UriPath.GetAllMoonsWithMassQueryParameters)
+                    .Result;
 
-            return stringBuilder
-                .ToString()
-                .Normalize(NormalizationForm.FormC);
+                if (!response.IsSuccessStatusCode) return null;
+
+                var content = response.Content.ReadAsStringAsync().Result;
+                var results = JsonConvert.DeserializeObject<JsonResult<MoonDto>>(content);
+
+                return results?.Bodies?
+                    .GroupBy(m => m.Id, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+            }
+            catch (Exception ex)
+            {
+                Logger.Instance.Warn($"Bulk moon pre-fetch failed, will fallback to individual queries: {ex.Message}");
+                return null;
+            }
+        }
+
+        private MoonDto FetchIndividualMoon(string moonId)
+        {
+            try
+            {
+                var response = _httpClientService.Client
+                    .GetAsync(UriPath.GetMoonByIdQueryParameters + moonId)
+                    .Result;
+
+                if (!response.IsSuccessStatusCode) return null;
+
+                var content = response.Content.ReadAsStringAsync().Result;
+                return JsonConvert.DeserializeObject<MoonDto>(content);
+            }
+            catch (Exception ex)
+            {
+                Logger.Instance.Error($"Failed to fetch individual moon '{moonId}': {ex.Message}");
+                return null;
+            }
         }
     }
 }
