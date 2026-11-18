@@ -3,6 +3,7 @@ using System.IO;
 using System.Reflection;
 using log4net;
 using log4net.Config;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Test_Taste_Console_Application.Constants;
 using Test_Taste_Console_Application.Domain.Services;
@@ -52,6 +53,14 @@ namespace Test_Taste_Console_Application
             //The function configures all the services.
             XmlConfigurator.Configure(LogManager.GetRepository(Assembly.GetEntryAssembly()),
                 new FileInfo(ConfigurationFileName.Logger));
+
+            var configuration = new Microsoft.Extensions.Configuration.ConfigurationBuilder()
+                .SetBasePath(Directory.GetCurrentDirectory())
+                .AddJsonFile(ConfigurationFileName.AppSettings, optional: true, reloadOnChange: true)
+                .AddEnvironmentVariables()
+                .Build();
+
+            serviceCollection.AddSingleton<Microsoft.Extensions.Configuration.IConfiguration>(configuration);
             serviceCollection.AddHttpClient<HttpClientService>();
             serviceCollection.AddSingleton<IPlanetService, PlanetService>();
             serviceCollection.AddSingleton<IOutputService, ScreenOutputService>();
