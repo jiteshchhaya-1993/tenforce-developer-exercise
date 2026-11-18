@@ -1,5 +1,4 @@
-﻿using System;
-using Test_Taste_Console_Application.Domain.DataTransferObjects;
+﻿using Test_Taste_Console_Application.Domain.DataTransferObjects;
 
 namespace Test_Taste_Console_Application.Domain.Objects
 {
@@ -8,12 +7,24 @@ namespace Test_Taste_Console_Application.Domain.Objects
         public string Id { get; set; }
         public float MassValue { get; set; }
         public float MassExponent { get; set; }
+        
+        /// <summary>
+        /// Mean temperature in Kelvin.
+        /// </summary>
+        public float? AverageTemperature { get; set; }
+
+        /// <summary>
+        /// Surface gravity in m/s^2.
+        /// </summary>
+        public float? Gravity { get; set; }
 
         public Moon(MoonDto moonDto)
         {
             Id = moonDto.Id;
             MassValue = moonDto.MassValue;
             MassExponent = moonDto.MassExponent;
+            AverageTemperature = moonDto.AvgTemp;
+            Gravity = moonDto.Gravity;
         }
     }
 }
